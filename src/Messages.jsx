@@ -25,7 +25,7 @@ const Messages = () => {
         {messages.map((message) => (
           <li key={message.id}>
             <p>
-              <strong>{message.whatsAppNumber}</strong>: {message.securedText}
+              <strong>{message.whatsAppNumber}</strong>: {message.text}
             </p>
           </li>
         ))}
