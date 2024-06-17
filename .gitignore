@@ -27,3 +27,4 @@ dist-ssr
 node_modules/
 .env
 firebase-service-account.json
+.vercel
