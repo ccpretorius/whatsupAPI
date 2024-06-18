@@ -40,3 +40,7 @@ export default Messages;
 // curl -X POST http://localhost:3000/webhook/+2348062209847 \
 //      -H "Content-Type: application/json" \
 //      -d '{"text": "Hello, this is a test message no 1"}'
+
+// curl -X POST http://localhost:3000/webhook/+2348062209847 \
+//      -H "Content-Type: application/json" \
+//      -d '{"text": "Hello, this is a test message no 1"}'
