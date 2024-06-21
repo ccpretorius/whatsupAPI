@@ -67,7 +67,6 @@ const departmentMapping = {
   "+2341234567890": "sales",
   "+2340987654321": "support",
   "+2348062209847": "management",
-  // Add more mappings as needed
 };
 
 // Check if the WhatsApp number belongs to staff
@@ -75,25 +74,57 @@ function isStaffNumber(whatsAppNumber) {
   return staffNumbers.includes(whatsAppNumber);
 }
 
-// Assign department based on WhatsApp number
-function assignDepartmentBasedOnWhatsAppNumber(whatsAppNumber) {
-  const department = departmentMapping[whatsAppNumber] || "general";
-  console.log(`Assigned department for ${whatsAppNumber}: ${department}`);
-  return department;
+// Fetch client data from Firestore
+async function fetchClientData(senderNumber) {
+  const clientData = {};
+  console.log(`Fetching client data for sender number: ${senderNumber}`);
+
+  try {
+    const messagesSnapshot = await db.collection("messages").where("senderNumber", "==", senderNumber).get();
+    if (!messagesSnapshot.empty) {
+      clientData.messages = messagesSnapshot.docs.map((doc) => {
+        const data = doc.data();
+        console.log(`Fetched message: ${JSON.stringify(data).slice(0, 20)}`);
+        return data;
+      });
+      console.log(`Fetched ${clientData.messages.length} messages for client.`);
+    } else {
+      console.log("No messages found for this client.");
+    }
+  } catch (error) {
+    console.error("Error fetching client data:", error);
+  }
+
+  return clientData;
 }
 
-// Assign staff based on WhatsApp number
-function assignStaffBasedOnWhatsAppNumber(whatsAppNumber) {
-  const mapping = {
-    "+2341234567890": "staff1",
-    "+2340987654321": "staff2",
-    "+2348062209847": "staff3",
-  };
-  const staffId = mapping[whatsAppNumber] || "staffDefault";
-  console.log(`Assigned staffId for ${whatsAppNumber}: ${staffId}`);
-  return staffId;
+// Create a detailed prompt for OpenAI
+function createDetailedPrompt(clientData, currentMessage) {
+  console.log("Creating detailed prompt...");
+  let prompt = `
+  Analyze the following client data and provide the most pressing next step:
+
+  Latest Message: ${currentMessage.text}
+
+  Client's Message History:
+  `;
+
+  clientData.messages.forEach((msg, index) => {
+    prompt += `
+    Message ${index + 1}: ${msg.text}
+    Sentiment: ${msg.sentiment || "N/A"}
+    `;
+  });
+
+  prompt += `
+  Provide the most important next step based on the analysis.
+  `;
+
+  console.log("Detailed prompt created.");
+  return prompt;
 }
 
+// Function to analyze sentiment using OpenAI
 async function analyzeSentiment(text) {
   console.log(`Analyzing sentiment for text: ${text}`);
   try {
@@ -108,14 +139,15 @@ async function analyzeSentiment(text) {
     }
 
     const sentiment = response.choices[0].message.content.trim();
-    console.log(`Sentiment analysis result: ${sentiment}`);
+    console.log(`Sentiment analysis result: ${sentiment.slice(0, 20)}`);
     return sentiment;
   } catch (error) {
     console.error("Error analyzing sentiment:", error);
-    return handleOpenAIError(error, "analyzeSentiment", text);
+    handleOpenAIError(error, "analyzeSentiment", text);
   }
 }
 
+// Function to call OpenAI for generating next steps
 async function callOpenAI(prompt) {
   console.log(`Calling OpenAI with prompt: ${prompt}`);
   try {
@@ -130,14 +162,15 @@ async function callOpenAI(prompt) {
     }
 
     const nextStep = response.choices[0].message.content.trim();
-    console.log(`OpenAI next step result: ${nextStep}`);
+    console.log(`OpenAI next step result: ${nextStep.slice(0, 20)}`);
     return nextStep;
   } catch (error) {
     console.error("Error calling OpenAI:", error);
-    return handleOpenAIError(error, "callOpenAI", prompt);
+    handleOpenAIError(error, "callOpenAI", prompt);
   }
 }
 
+// Handle OpenAI errors
 async function handleOpenAIError(error, functionName, inputText) {
   if (error.response && error.response.status === 429) {
     console.error(`${functionName}: Rate limit exceeded. Retrying after delay...`);
@@ -145,127 +178,77 @@ async function handleOpenAIError(error, functionName, inputText) {
     return this[functionName](inputText);
   } else if (error.response && error.response.status === 402) {
     console.error(`${functionName}: Insufficient funds. Please check your billing details.`);
-    return "Insufficient funds. Please check your billing details.";
+    throw new Error("Insufficient funds. Please check your billing details.");
   } else {
     console.error(`${functionName}: ${error.message}`);
-    return error.message;
+    throw error;
   }
 }
 
-app.post("/webhook/:whatsAppNumber", async (req, res) => {
-  console.log(`Webhook endpoint hit. WhatsApp number: ${req.params.whatsAppNumber}`);
+// Webhook endpoint to process incoming messages
+app.post("/webhook/:senderNumber", async (req, res) => {
+  console.log(`Webhook endpoint hit. Sender number: ${req.params.senderNumber}`);
   const message = req.body;
   console.log(`Received message: ${JSON.stringify(message)}`);
 
-  const whatsAppNumber = req.params.whatsAppNumber;
-  const isStaff = isStaffNumber(whatsAppNumber);
+  const senderNumber = req.params.senderNumber;
+  console.log("Sender Number: ", senderNumber);
 
-  console.log(`WhatsApp number: ${whatsAppNumber}`);
+  const isStaff = isStaffNumber(senderNumber);
+  console.log("Is Staff: ", isStaff);
+
+  // Debug logging to check department mapping
+  console.log(`WhatsApp number: ${senderNumber}`);
   console.log(`Staff check: ${isStaff}`);
+  console.log(`Department mapping: ${JSON.stringify(departmentMapping)}`);
 
-  const department = assignDepartmentBasedOnWhatsAppNumber(whatsAppNumber);
+  const department = departmentMapping[senderNumber] || "general";
   console.log(`Assigned department: ${department}`);
 
-  const staffId = assignStaffBasedOnWhatsAppNumber(whatsAppNumber);
+  const staffId = assignStaffBasedOnWhatsAppNumber(senderNumber);
   console.log(`Assigned staffId: ${staffId}`);
 
-  if (isStaff) {
-    console.log(`Message from staff number: ${whatsAppNumber}`);
-    console.log(`Staff message content: ${message.text}`);
+  try {
+    const sentiment = await analyzeSentiment(message.text);
+    console.log(`Sentiment analysis completed: ${sentiment.slice(0, 20)}`);
 
-    console.log("Entering try block for staff message processing...");
-    // Save staff message to Firestore
-    try {
-      console.log("Calling analyzeSentiment for staff message...");
-      const sentiment = await analyzeSentiment(message.text);
-      console.log(`Sentiment analysis for staff completed: ${sentiment}`);
+    // Always fetch client data
+    const clientData = await fetchClientData(senderNumber);
+    console.log(`Client data fetched: ${JSON.stringify(clientData).slice(0, 20)}`);
 
-      console.log("Calling callOpenAI for staff message...");
-      const nextStep = await callOpenAI(`Analyze the following staff message and provide next steps: ${message.text}`);
-      console.log(`Next step for staff from OpenAI: ${nextStep}`);
+    const detailedPrompt = createDetailedPrompt(clientData, message);
+    console.log(`Detailed prompt: ${detailedPrompt}`);
 
-      console.log("Saving staff message to Firestore...");
-      const savedMessage = await db.collection("messages").add({
-        ...message,
-        sentiment: sentiment || "N/A",
-        nextStep: nextStep || "N/A",
-        whatsAppNumber: whatsAppNumber,
-        department: department,
-        staffId: staffId,
-        timestamp: new Date().toISOString(),
-      });
-      console.log("Staff message saved to Firestore:", savedMessage.id);
-    } catch (error) {
-      console.error("Error saving staff message to Firestore:", error);
-      res.status(500).send("Error saving staff message to Firestore.");
-      return;
-    }
+    const nextStep = await callOpenAI(detailedPrompt);
+    console.log(`Next step from OpenAI: ${nextStep.slice(0, 20)}`);
 
-    console.log("Exiting try block for staff message processing...");
-
-    //this should display on server terminal
-    res.send(`Acknowledged staff message: ${message.text}`);
-  } else {
-    console.log(`Message from client number: ${whatsAppNumber}`);
-
-    try {
-      const clientData = await fetchClientData(whatsAppNumber);
-
-      if (clientData.messages.length === 0) {
-        console.log("New client detected. Creating new record in Firestore...");
-        try {
-          const newClient = await db.collection("clients").add({
-            whatsAppNumber: whatsAppNumber,
-            firstMessage: message.text,
-            timestamp: new Date().toISOString(),
-          });
-          console.log("New client record created:", newClient.id);
-        } catch (error) {
-          console.error("Error creating new client record:", error);
-        }
-      }
-
-      const sentiment = await analyzeSentiment(message.text);
-      console.log(`Sentiment analysis completed: ${sentiment}`);
-
-      const detailedPrompt = createDetailedPrompt(clientData, message);
-      console.log(`Detailed prompt: ${detailedPrompt}`);
-
-      const nextStep = await callOpenAI(detailedPrompt);
-      console.log(`Next step from OpenAI: ${nextStep}`);
-
-      console.log("Saving message and analysis to Firestore...");
-      try {
-        const savedMessage = await db.collection("messages").add({
-          ...message,
-          sentiment: sentiment || "N/A",
-          nextStep: nextStep || "N/A",
-          whatsAppNumber: whatsAppNumber,
-          department: department,
-          staffId: staffId,
-          timestamp: new Date().toISOString(),
-        });
-        console.log("Message and analysis saved to Firestore:", savedMessage.id);
-      } catch (error) {
-        console.error("Error saving message to Firestore:", error);
-        res.status(500).send("Error saving message to Firestore.");
-        return;
-      }
-
-      res.sendStatus(200);
-    } catch (error) {
-      console.error("Error processing message:", error);
-
-      if (error.response) {
-        console.error("Error details:", error.response.data);
-      } else {
-        console.error("Unknown error:", error.message);
-      }
-
-      res.status(500).send("Internal Server Error");
-    }
+    console.log("Saving message and analysis to Firestore...");
+    const savedMessage = await db.collection("messages").add({
+      ...message,
+      sentiment: sentiment || "N/A",
+      nextStep: nextStep || "N/A",
+      senderNumber: senderNumber,
+      recipientNumber: "client_number_here", // Placeholder
+      department: department,
+      staffId: staffId,
+      timestamp: new Date().toISOString(),
+    });
+    console.log("Message and analysis saved to Firestore:", savedMessage.id);
+    res.send(`Acknowledged message: ${message.text}`);
+  } catch (error) {
+    console.error("Error processing message:", error);
+    res.status(500).send("Internal Server Error");
   }
 });
+
+// Function to assign staff based on WhatsApp number
+function assignStaffBasedOnWhatsAppNumber(whatsAppNumber) {
+  const mapping = {
+    "+2348062209847": "staff1",
+    "+2340987654321": "staff2",
+  };
+  return mapping[whatsAppNumber] || "staffDefault";
+}
 
 app.listen(3000, () => {
   console.log("Server started on port 3000");
